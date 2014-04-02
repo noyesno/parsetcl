@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <string>
 
-static std::string parsetcl_listener = "parsetclcbk";
 static struct {
   std::string listener;
+  std::string subst;
   bool        raw;
-} parsetclcfg = {"parsetclcbk", false};
+} parsetclcfg = {"parsetcl::command", "parsetcl::bracket", false};
 
 const char* getTclTokenName(int type){
   switch(type){
@@ -44,7 +44,7 @@ int Tcl_CmdObjTraceProc_impl(
 
 
 
-int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
+int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, const char *action=NULL) {
   //const char *start = "set abc [expr 3+4]";
   //int numBytes = -1;
   int nested = 0;
@@ -57,7 +57,13 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
     }
 
     Tcl_Obj *objv = Tcl_NewListObj(0, NULL);
-    Tcl_Obj *command = Tcl_NewStringObj(parsetcl_listener.c_str(),-1);
+    Tcl_Obj *command;
+
+    if(action==NULL){
+      command = Tcl_NewStringObj(parsetclcfg.listener.c_str(),-1);
+    }else{
+      command = Tcl_NewStringObj(action,-1);
+    }
     Tcl_ListObjAppendElement(interp, objv, command);
     // Tcl_DecrRefCount(obj);
     // Tcl_SetListObj(objv, 0, NULL);
@@ -72,20 +78,12 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
     // comment include preceding white space
     Tcl_Obj *comment = Tcl_NewStringObj(start, parsePtr.commandStart - start);
     Tcl_ListObjAppendElement(interp, objv, comment);
+    Tcl_Obj *cmdtext = Tcl_NewStringObj(parsePtr.commandStart, parsePtr.commandSize);
+    Tcl_ListObjAppendElement(interp, objv, cmdtext);
+
     if(parsePtr.commandSize==0){
       //printf("comment size: %d\n", parsePtr.commandStart - start);
     }
-
-
-    if (parsetclcfg.raw) {
-      //if(parsePtr.commandSize>0){
-        Tcl_Obj *cmdtext = Tcl_NewStringObj(parsePtr.commandStart, parsePtr.commandSize);
-        Tcl_ListObjAppendElement(interp, objv, cmdtext);
-      //} else {
-        // printf("comment only: %d %d %d\n", parsePtr.commandStart, parsePtr.commandSize, parsePtr.numTokens);
-      //}
-    }
-
 
     bool is_simple = true;
     bool has_cmd = false, has_var = false;
@@ -98,21 +96,35 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
       //  is_simple = false;
       }
 
-      for(int j=0, jn=tok->numComponents; j<jn; j++){
-        const Tcl_Token *t = parsePtr.tokenPtr+(i+1+j);
-        //printf("%s\n", getTclTokenName(t->type));
-        if(t->type == TCL_TOKEN_COMMAND){
-          has_cmd = true;
-          //TODO: parse_tcl_command(interp, t->start+1, t->size-2);
-        }else if(t->type == TCL_TOKEN_VARIABLE){
-          has_var = true;
-        }
-      }
+      //-- for(int j=0, jn=tok->numComponents; j<jn; j++){
+      //--   const Tcl_Token *t = parsePtr.tokenPtr+(i+1+j);
+      //--   // printf("DEBUG: %s\n", getTclTokenName(t->type));
+      //--   if(t->type == TCL_TOKEN_COMMAND){
+      //--     has_cmd = true;
+      //--     //TODO: parse_tcl_command(interp, t->start+1, t->size-2);
+      //--     std::string s(t->start,t->size);
+      //--     //printf("DEBUG: %d %s\n", tok->numComponents, s.c_str());
+      //--   }else if(t->type == TCL_TOKEN_VARIABLE){
+      //--     has_var = true;
+      //--   }
+      //-- }
 
-      i += tok->numComponents;
-      Tcl_Obj *part = Tcl_NewStringObj(tok->start, tok->size);
+      const Tcl_Token *subtok = parsePtr.tokenPtr+i+1;
+      Tcl_Obj *part;
+      if(tok->numComponents==1 && subtok->type == TCL_TOKEN_COMMAND){
+          std::string s(subtok->start,subtok->size);
+          // printf("DEBUG: %d %s\n", tok->numComponents, s.c_str());
+          
+          parse_tcl_command(interp, subtok->start+1, subtok->size-2, parsetclcfg.subst.c_str());
+          part = Tcl_GetObjResult(interp);
+          // part = Tcl_ObjPrintf("[%s]", Tcl_GetStringResult(interp));
+      } else {
+          part = Tcl_NewStringObj(tok->start, tok->size);
+      }
       Tcl_ListObjAppendElement(interp, objv, part);
+
       // TODO: add space between token
+      i += tok->numComponents;
       if (parsetclcfg.raw) {
         const char *p = tok->start + tok->size;
         Tcl_Obj *sp;
@@ -140,7 +152,7 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
       Tcl_DictObjGet(NULL, options, key, &stackTrace);
       Tcl_DecrRefCount(key);
     /* Do something with stackTrace */
-      fprintf(stderr, "Tcl Error %s\n", Tcl_GetString(stackTrace));
+      fprintf(stderr, "Error: Tcl Error %s\n", Tcl_GetString(stackTrace));
       Tcl_DecrRefCount(options);
       return -1;
       // TODO: return TCL_OK;
@@ -164,6 +176,10 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1) {
     Tcl_FreeParse(&parsePtr);
     return size;
   } else {
+    fprintf(stderr, "Error: Tcl_ParseCommand: %s\n", Tcl_GetStringResult(interp));
+    fprintf(stderr, "----\n");
+    fprintf(stderr, "%.*s\n", 81, start); //TODO: the length
+    fprintf(stderr, "----\n");
     Tcl_FreeParse(&parsePtr);
     return -1;
   }
@@ -177,7 +193,7 @@ int parse_tcl_text(Tcl_Interp *interp, const char *buf, int length){
     if(n>-1) {
       start = start + n;
     }else{
-      fprintf(stderr, "Error: parse error ...\n");
+      // fprintf(stderr, "Error: parse_tcl_text: %s\n", Tcl_GetStringResult(interp));
       break;
     }
   }
@@ -215,9 +231,31 @@ int parse_tcl_file(Tcl_Interp *interp, const char *file){
   fclose(fp);
 }
 
-int parsetcl_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
+/*
+ * parsetcl config -raw
+ * parsetcl config -listener proc_name
+ *
+ * parsetcl -file $file
+ * parsetcl -code $code
+ */
+int parsetcl_config_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
+  for(int i=1; i<objc; i++){
+    const char *subcmd = Tcl_GetString(objv[i]);
+    if(0==strcmp(subcmd,"-raw")){
+      parsetclcfg.raw = true;
+    }else if(0==strcmp(subcmd,"-command")){
+      parsetclcfg.listener = Tcl_GetString(objv[++i]);
+    }else if(0==strcmp(subcmd,"-bracket")){
+      parsetclcfg.subst = Tcl_GetString(objv[++i]);
+    }
+  }
+  return TCL_OK;
+}
+
+int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
   const char *subcmd = Tcl_GetString(objv[1]);
-  // -raw
+
+  // TODO: handle return error
   if(strcmp(subcmd,"-file")==0){
     const char *file = Tcl_GetString(objv[2]);
     parse_tcl_file(interp, file);
@@ -225,23 +263,18 @@ int parsetcl_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj
     int len = -1;
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
     if (code[0]=='{' || code[0]=='"' || code[0]=='[') {
-      // parse_tcl_command(interp, code+1, len-2);
       parse_tcl_text(interp, code+1, len-2);
     }else{
-      //parse_tcl_command(interp, code);
       parse_tcl_text(interp, code, len);
     }
   }else if(strcmp(subcmd,"-cmd")==0){
     int len = -1;
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
     parse_tcl_command(interp, code);
-  }else if(strcmp(subcmd,"-listener")==0){
-    parsetcl_listener = Tcl_GetString(objv[2]);
-  }else if(strcmp(subcmd,"-raw")==0){
-    parsetclcfg.raw = true;
   } else {
     printf("Usage: -file | -code | -listener | -raw\n");
   }
+
   return TCL_OK;
 }
 
@@ -261,7 +294,10 @@ int Parsetcl_Init(Tcl_Interp *interp) {
  }
 #endif
 
- Tcl_CreateObjCommand(interp, "parsetcl", parsetcl_ObjCmd, NULL, NULL);
+ Tcl_CreateNamespace(interp, "parsetcl", NULL, NULL);
+ Tcl_CreateObjCommand(interp, "parsetcl",         parsetcl_parse_ObjCmd, NULL, NULL);
+ Tcl_CreateObjCommand(interp, "parsetcl::parse",  parsetcl_parse_ObjCmd, NULL, NULL);
+ Tcl_CreateObjCommand(interp, "parsetcl::config", parsetcl_config_ObjCmd, NULL, NULL);
  //printf("parsetcl loaded!\n");
  return TCL_OK;
 }
@@ -269,7 +305,7 @@ int Parsetcl_Init(Tcl_Interp *interp) {
 }
 
 
-int appInitProc(Tcl_Interp *interp){
+int Tcl_AppInit(Tcl_Interp *interp){
 
   // Tcl_Init(interp);
   // Tcl_SourceRCFile(interp);
@@ -288,12 +324,10 @@ int appInitProc(Tcl_Interp *interp){
   }
   */
 
-  /*
-  char buf[255];
+  char buf[512];
   const char *name = Tcl_GetNameOfExecutable();
-  sprintf(buf, "%s.tcl", name);
-  Tcl_EvalFile(interp, buf); // TODO
-  */
+  sprintf(buf, "%s.lib.tcl", name);
+  Tcl_EvalFile(interp, buf);
 
   //Tcl_Obj *startup = Tcl_GetStartupScript(NULL);
 
@@ -314,7 +348,7 @@ int appInitProc(Tcl_Interp *interp){
 
 #ifdef __MAIN__
 int main(int argc, char **argv){
-  Tcl_Main(argc, argv, appInitProc);
+  Tcl_Main(argc, argv, Tcl_AppInit);
   return 0;
 }
 #endif
