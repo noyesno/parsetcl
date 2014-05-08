@@ -211,6 +211,10 @@ int parse_tcl_file(Tcl_Interp *interp, const char *file){
     fp = fopen(file, "r");
   }
 
+  if(fp==NULL){
+    fprintf(stderr, "Error: fail to open file '%s' for read.\n", file);
+    return TCL_ERROR;
+  }
   char buf[10240];
   std::string s="";
   while(NULL!=fgets(buf, 10240, fp)){
@@ -229,6 +233,8 @@ int parse_tcl_file(Tcl_Interp *interp, const char *file){
   }
   */
   fclose(fp);
+
+  return TCL_OK;
 }
 
 /*
@@ -258,7 +264,7 @@ int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, T
   // TODO: handle return error
   if(strcmp(subcmd,"-file")==0){
     const char *file = Tcl_GetString(objv[2]);
-    parse_tcl_file(interp, file);
+    return parse_tcl_file(interp, file);
   }else if(strcmp(subcmd,"-code")==0){
     int len = -1;
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
