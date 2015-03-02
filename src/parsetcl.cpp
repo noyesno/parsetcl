@@ -7,12 +7,15 @@ static struct {
   std::string listener;
   std::string subst;
   bool        raw;
-} parsetclcfg = {"parsetcl::command", "parsetcl::bracket", false};
+  int         debug;
+  int         hint;
+} parsetclcfg = {"parsetcl::command", "parsetcl::bracket", false, 0, 0};
 
 const char* getTclTokenName(int type){
   switch(type){
     case TCL_TOKEN_WORD : return "TCL_TOKEN_WORD";
     case TCL_TOKEN_SIMPLE_WORD : return "TCL_TOKEN_SIMPLE_WORD";
+    case TCL_TOKEN_EXPAND_WORD : return "TCL_TOKEN_EXPAND_WORD";
     case TCL_TOKEN_TEXT: return "TCL_TOKEN_TEXT"; 
     case TCL_TOKEN_BS: return "TCL_TOKEN_BS";
     case TCL_TOKEN_COMMAND: return "TCL_TOKEN_COMMAND";
@@ -77,8 +80,8 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
 
     // comment include preceding white space
     Tcl_Obj *comment = Tcl_NewStringObj(start, parsePtr.commandStart - start);
-    Tcl_ListObjAppendElement(interp, objv, comment);
     Tcl_Obj *cmdtext = Tcl_NewStringObj(parsePtr.commandStart, parsePtr.commandSize);
+    Tcl_ListObjAppendElement(interp, objv, comment);
     Tcl_ListObjAppendElement(interp, objv, cmdtext);
 
     if(parsePtr.commandSize==0){
@@ -86,41 +89,87 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
     }
 
     bool is_simple = true;
-    bool has_cmd = false, has_var = false;
-    for(int i=0, n=parsePtr.numTokens;i<n;i++){
+    bool has_cmd = false, has_var = false, has_expand = false, has_bs=false, has_txt=false;
+    int  n_cmd = 0, n_var = 0, n_bs=0, n_txt=0;
+    for(int i=0, n=parsePtr.numTokens; i<n; i++){
       const Tcl_Token *tok = parsePtr.tokenPtr+i;
-      if(tok->type == TCL_TOKEN_SIMPLE_WORD){
-      }else if(tok->type == TCL_TOKEN_WORD){
-        is_simple = false;
-      //}else if(tok->type == TCL_TOKEN_EXPAND_WORD){
-      //  is_simple = false;
+      if(parsetclcfg.debug){
+        printf("TOKEN: %s %.*s\n", getTclTokenName(tok->type), tok->size, tok->start);
+      }
+      switch(tok->type){
+        case TCL_TOKEN_SIMPLE_WORD :
+          // ...
+          break;
+        case TCL_TOKEN_WORD :
+          is_simple = false;
+          break;
+        case TCL_TOKEN_EXPAND_WORD :
+          has_expand = true;
+          break;
+        default:
+          fprintf(stderr, "Error: unexpected token type %d for command\n", tok->type);
+          return TCL_ERROR;
       }
 
-      //-- for(int j=0, jn=tok->numComponents; j<jn; j++){
-      //--   const Tcl_Token *t = parsePtr.tokenPtr+(i+1+j);
-      //--   // printf("DEBUG: %s\n", getTclTokenName(t->type));
-      //--   if(t->type == TCL_TOKEN_COMMAND){
-      //--     has_cmd = true;
-      //--     //TODO: parse_tcl_command(interp, t->start+1, t->size-2);
-      //--     std::string s(t->start,t->size);
-      //--     //printf("DEBUG: %d %s\n", tok->numComponents, s.c_str());
-      //--   }else if(t->type == TCL_TOKEN_VARIABLE){
-      //--     has_var = true;
-      //--   }
+      // TODO: parse the info to Tcl
+
+
+      Tcl_Obj *part = Tcl_NewStringObj("", -1);
+
+      if(has_expand){
+        Tcl_AppendToObj(part, "{*}", -1);
+      }
+
+      for(int j=0, jn=tok->numComponents; j<jn; j++){
+        const Tcl_Token *t = parsePtr.tokenPtr+(i+1+j);
+        if(parsetclcfg.debug){
+          printf("  tok: %s %.*s\n", getTclTokenName(t->type), t->size, t->start);
+        }
+
+        switch(t->type){
+          case TCL_TOKEN_COMMAND :
+            has_cmd = true; n_cmd++;
+            /* recursive parse sub command */
+            parse_tcl_command(interp, t->start+1, t->size-2, parsetclcfg.subst.c_str());
+            Tcl_AppendObjToObj(part, Tcl_GetObjResult(interp));
+            break;
+          case TCL_TOKEN_VARIABLE :
+            has_var = true; n_var++;
+            j += t->numComponents; /* skip sub tokens of variable */
+            Tcl_AppendToObj(part, t->start, t->size);
+            break;
+          case TCL_TOKEN_BS:
+            has_bs  = true; n_bs++;
+            break;
+            Tcl_AppendToObj(part, t->start, t->size);
+          case TCL_TOKEN_TEXT:
+            has_txt  = true; n_txt++;
+            Tcl_AppendToObj(part, t->start, t->size);
+            break;
+          default:
+            Tcl_AppendToObj(part, t->start, t->size);
+            break;
+        }
+      }
+
+
+      //-- const Tcl_Token *subtok = parsePtr.tokenPtr+i+1;
+      //-- if(tok->numComponents==1 && subtok->type == TCL_TOKEN_COMMAND){
+      //--     std::string s(subtok->start,subtok->size);
+      //--     // printf("DEBUG: %d %s\n", tok->numComponents, s.c_str());
+
+      //--     parse_tcl_command(interp, subtok->start+1, subtok->size-2, parsetclcfg.subst.c_str());
+      //--     if(has_expand){
+      //--       part = Tcl_NewStringObj("{*}", -1);
+      //--       Tcl_AppendObjToObj(part, Tcl_GetObjResult(interp));
+      //--     }else{
+      //--       part = Tcl_GetObjResult(interp);
+      //--     }
+      //--     // part = Tcl_ObjPrintf("[%s]", Tcl_GetStringResult(interp));
+      //-- } else {
+      //--     part = Tcl_NewStringObj(tok->start, tok->size);
       //-- }
 
-      const Tcl_Token *subtok = parsePtr.tokenPtr+i+1;
-      Tcl_Obj *part;
-      if(tok->numComponents==1 && subtok->type == TCL_TOKEN_COMMAND){
-          std::string s(subtok->start,subtok->size);
-          // printf("DEBUG: %d %s\n", tok->numComponents, s.c_str());
-          
-          parse_tcl_command(interp, subtok->start+1, subtok->size-2, parsetclcfg.subst.c_str());
-          part = Tcl_GetObjResult(interp);
-          // part = Tcl_ObjPrintf("[%s]", Tcl_GetStringResult(interp));
-      } else {
-          part = Tcl_NewStringObj(tok->start, tok->size);
-      }
       Tcl_ListObjAppendElement(interp, objv, part);
 
       // TODO: add space between token
@@ -139,9 +188,18 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
       }
       //printf("tok %.*s %s %d %d %d\n",tok->size, tok->start, getTclTokenName(tok->type), tok->type, tok->size, tok->numComponents);
     }
+
     int        objv_c;
     Tcl_Obj  **objv_v;
     Tcl_ListObjGetElements(interp, objv, &objv_c, &objv_v);
+
+    if(parsetclcfg.hint){
+      Tcl_Obj *hint = Tcl_NewStringObj("::parsetcl::hint", -1);
+      Tcl_ObjSetVar2(interp, hint, Tcl_NewStringObj("n_cmd", -1), Tcl_NewIntObj(n_cmd), TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
+      Tcl_ObjSetVar2(interp, hint, Tcl_NewStringObj("n_var", -1), Tcl_NewIntObj(n_var), TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
+      Tcl_ObjSetVar2(interp, hint, Tcl_NewStringObj("n_txt", -1), Tcl_NewIntObj(n_txt), TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
+      Tcl_ObjSetVar2(interp, hint, Tcl_NewStringObj("n_bs", -1),  Tcl_NewIntObj(n_bs),  TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
+    }
 
     int ret = Tcl_EvalObjv(interp, objv_c, objv_v, 0);
     if(ret != TCL_OK){
@@ -253,6 +311,10 @@ int parsetcl_config_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, 
       parsetclcfg.listener = Tcl_GetString(objv[++i]);
     }else if(0==strcmp(subcmd,"-bracket")){
       parsetclcfg.subst = Tcl_GetString(objv[++i]);
+    }else if(0==strcmp(subcmd,"-debug")){
+      Tcl_GetIntFromObj(interp, objv[++i], &parsetclcfg.debug);
+    }else if(0==strcmp(subcmd,"-hint")){
+      Tcl_GetIntFromObj(interp, objv[++i], &parsetclcfg.hint);
     }
   }
   return TCL_OK;
@@ -293,12 +355,12 @@ int Parsetcl_Init(Tcl_Interp *interp) {
    fprintf(stderr, "Error: Tcl_InitStubs\n");
    return TCL_ERROR;
  }
-#else
+#endif
+
  if(Tcl_PkgRequire(interp, "Tcl", "8.4", 0) == NULL) {
    fprintf(stderr, "Error: package require Tcl 8.4\n");
    return TCL_ERROR;
  }
-#endif
 
  Tcl_CreateNamespace(interp, "parsetcl", NULL, NULL);
  Tcl_CreateObjCommand(interp, "parsetcl",         parsetcl_parse_ObjCmd, NULL, NULL);
@@ -309,55 +371,5 @@ int Parsetcl_Init(Tcl_Interp *interp) {
 }
 
 }
-
-
-int Tcl_AppInit(Tcl_Interp *interp){
-
-  // Tcl_Init(interp);
-  // Tcl_SourceRCFile(interp);
-
-  //Tcl_SetStartupScript("/remote/us01home19/szhang/scratch/disk.dc/dc2nwtn/misc/tcltrace.tcl",NULL);
-
-  // parse_tcl_command(interp);
-
-  // Tcl_AllowExceptions(interp);
-
-  Parsetcl_Init(interp);
-  Tcl_StaticPackage(interp, "Parsetcl", Parsetcl_Init, NULL);
-  /*
-  if(TCL_OK != Tcl_Eval(interp,"load {} Parsetcl")){
-    printf("Error: load error\n");
-  }
-  */
-
-  char buf[512];
-  const char *name = Tcl_GetNameOfExecutable();
-  sprintf(buf, "%s.lib.tcl", name);
-  Tcl_EvalFile(interp, buf);
-
-  //Tcl_Obj *startup = Tcl_GetStartupScript(NULL);
-
-  //parse_tcl_file(interp,"dcp558_gif_fp.cstr.tcl");
-
-  /*
-  int level = 0;
-  int flags = 0; // TCL_ALLOW_INLINE_COMPILATION
-  Tcl_CmdObjTraceProc	*objProc = Tcl_CmdObjTraceProc_impl;
-  ClientData	clientData = 0;
-  Tcl_CmdObjTraceDeleteProc	*deleteProc=NULL;
-  Tcl_CreateObjTrace(interp, level, flags, objProc, clientData, deleteProc);
-  */
-
-  // Tcl_Eval(interp,"exit");
-  return TCL_OK;
-}
-
-#ifdef __MAIN__
-int main(int argc, char **argv){
-  Tcl_Main(argc, argv, Tcl_AppInit);
-  return 0;
-}
-#endif
-
 
 
