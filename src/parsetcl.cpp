@@ -130,6 +130,7 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
           case TCL_TOKEN_COMMAND :
             has_cmd = true; n_cmd++;
             /* recursive parse sub command */
+            // TODO: [ a ... ] is actually a code block
             parse_tcl_command(interp, t->start+1, t->size-2, parsetclcfg.subst.c_str());
             Tcl_AppendObjToObj(part, Tcl_GetObjResult(interp));
             break;
@@ -305,16 +306,25 @@ int parse_tcl_file(Tcl_Interp *interp, const char *file){
 int parsetcl_config_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
   for(int i=1; i<objc; i++){
     const char *subcmd = Tcl_GetString(objv[i]);
+    Tcl_Obj *argval;
     if(0==strcmp(subcmd,"-raw")){
       parsetclcfg.raw = true;
     }else if(0==strcmp(subcmd,"-command")){
-      parsetclcfg.listener = Tcl_GetString(objv[++i]);
+      argval = objv[++i];
+      parsetclcfg.listener = Tcl_GetString(argval);
+      Tcl_SetVar2Ex(interp, "::parsetcl::config", "-command", argval, TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     }else if(0==strcmp(subcmd,"-bracket")){
-      parsetclcfg.subst = Tcl_GetString(objv[++i]);
+      argval = objv[++i];
+      parsetclcfg.subst = Tcl_GetString(argval);
+      Tcl_SetVar2Ex(interp, "::parsetcl::config", "-bracket", argval, TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     }else if(0==strcmp(subcmd,"-debug")){
-      Tcl_GetIntFromObj(interp, objv[++i], &parsetclcfg.debug);
+      argval = objv[++i];
+      Tcl_GetIntFromObj(interp, argval, &parsetclcfg.debug);
+      Tcl_SetVar2Ex(interp, "::parsetcl::config", "-debug", argval, TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     }else if(0==strcmp(subcmd,"-hint")){
-      Tcl_GetIntFromObj(interp, objv[++i], &parsetclcfg.hint);
+      argval = objv[++i];
+      Tcl_GetIntFromObj(interp, argval, &parsetclcfg.hint);
+      Tcl_SetVar2Ex(interp, "::parsetcl::config", "-hint", argval, TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     }
   }
   return TCL_OK;
@@ -326,10 +336,12 @@ int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, T
   // TODO: handle return error
   if(strcmp(subcmd,"-file")==0){
     const char *file = Tcl_GetString(objv[2]);
+    Tcl_SetVar2(interp, "::parsetcl::config", "-input", "file", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     return parse_tcl_file(interp, file);
   }else if(strcmp(subcmd,"-code")==0){
     int len = -1;
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
+    Tcl_SetVar2(interp, "::parsetcl::config", "-input", "code", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     if (code[0]=='{' || code[0]=='"' || code[0]=='[') {
       parse_tcl_text(interp, code+1, len-2);
     }else{
@@ -337,6 +349,8 @@ int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, T
     }
   }else if(strcmp(subcmd,"-cmd")==0){
     int len = -1;
+    // TODO: use -block instead
+    Tcl_SetVar2(interp, "::parsetcl::config", "-input", "cmd", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
     parse_tcl_command(interp, code);
   } else {

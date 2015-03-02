@@ -19,6 +19,8 @@ proc parsetcl::bracket {comment cmdtext args} {
 parsetcl::config -hint 0 -debug 0
 parsetcl::config -raw 1
 
+puts [array get parsetcl::config]
+
 parsetcl -code {
  set a 123
  set b $a    ;# variable
@@ -30,3 +32,4 @@ parsetcl -code {
  set result_check_clock_tree [concat {*}[lsort -index 0 $result_check_clock_tree]]
 }
 
+puts [array get parsetcl::config]
