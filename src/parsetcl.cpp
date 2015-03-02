@@ -120,10 +120,17 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
         Tcl_AppendToObj(part, "{*}", -1);
       }
 
-      for(int j=0, jn=tok->numComponents; j<jn; j++){
+      for(int j=0, jn=tok->numComponents; j<jn; ){
         const Tcl_Token *t = parsePtr.tokenPtr+(i+1+j);
         if(parsetclcfg.debug){
           printf("  tok: %s %.*s\n", getTclTokenName(t->type), t->size, t->start);
+        }
+
+        if(j==0) {
+          if(t->start != tok->start){
+            // fprintf(stderr, " quote seen %.*s | %.*s\n", tok->size, tok->start, t->size, t->start);
+            Tcl_AppendToObj(part, tok->start, t->start - tok->start);
+          }
         }
 
         switch(t->type){
@@ -141,8 +148,8 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
             break;
           case TCL_TOKEN_BS:
             has_bs  = true; n_bs++;
-            break;
             Tcl_AppendToObj(part, t->start, t->size);
+            break;
           case TCL_TOKEN_TEXT:
             has_txt  = true; n_txt++;
             Tcl_AppendToObj(part, t->start, t->size);
@@ -150,6 +157,13 @@ int parse_tcl_command(Tcl_Interp *interp, const char *start, int numBytes=-1, co
           default:
             Tcl_AppendToObj(part, t->start, t->size);
             break;
+        }
+
+        j++;
+
+        if(j==jn) {
+          const char *p = t->start + t->size;
+          Tcl_AppendToObj(part, p, tok->start + tok->size - p);
         }
       }
 
@@ -338,7 +352,7 @@ int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, T
     const char *file = Tcl_GetString(objv[2]);
     Tcl_SetVar2(interp, "::parsetcl::config", "-input", "file", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
     return parse_tcl_file(interp, file);
-  }else if(strcmp(subcmd,"-code")==0){
+  }else if(strcmp(subcmd,"-code")==0 || strcmp(subcmd,"-block")==0){
     int len = -1;
     const char *code = Tcl_GetStringFromObj(objv[2], &len);
     Tcl_SetVar2(interp, "::parsetcl::config", "-input", "code", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);
@@ -347,7 +361,7 @@ int parsetcl_parse_ObjCmd(ClientData clientData, Tcl_Interp *interp, int objc, T
     }else{
       parse_tcl_text(interp, code, len);
     }
-  }else if(strcmp(subcmd,"-cmd")==0){
+  }else if(strcmp(subcmd,"-cmd")==0 || strcmp(subcmd,"-command")==0){
     int len = -1;
     // TODO: use -block instead
     Tcl_SetVar2(interp, "::parsetcl::config", "-input", "cmd", TCL_GLOBAL_ONLY | TCL_LEAVE_ERR_MSG);

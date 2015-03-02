@@ -23,6 +23,10 @@ puts [array get parsetcl::config]
 
 parsetcl -code {
  set a 123
+ set d1 "I love you"
+ set d2 {I love you}
+ set d3 [I love you]
+ set d4 "I love\nyou"
  set b $a    ;# variable
 
  set c def[set a]
